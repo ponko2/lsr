@@ -56,9 +56,15 @@ fn format_output(paths: &[PathBuf]) -> Result<String> {
     Ok(format!("{table}"))
 }
 
+/// 0o751のような8進数でファイルモードを指定すると、
+/// 「rwxr-x--x」のような文字列を返します。
+fn format_mode(mode: u32) -> String {
+    todo!();
+}
+
 #[cfg(test)]
 mod test {
-    use super::find_files;
+    use super::{find_files, format_mode};
 
     #[test]
     fn test_find_files() {
@@ -133,5 +139,11 @@ mod test {
                 "tests/inputs/fox.txt",
             ]
         );
+    }
+
+    #[test]
+    fn test_format_mode() {
+        assert_eq!(format_mode(0o755), "rwxr-xr-x");
+        assert_eq!(format_mode(0o421), "r---w---x");
     }
 }
