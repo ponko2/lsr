@@ -1,7 +1,12 @@
+mod owner;
+
 use anyhow::Result;
+use chrono::{DateTime, Local};
 use clap::Parser;
-use std::path::PathBuf;
+use owner::Owner;
+use std::{fs, os::unix::fs::MetadataExt, path::PathBuf};
 use tabular::{Row, Table};
+use users::{get_group_by_gid, get_user_by_uid};
 
 #[derive(Debug, Parser)]
 #[command(version, about, long_about = None)]
@@ -26,14 +31,38 @@ pub fn get_args() -> Result<Args> {
 
 pub fn run(args: Args) -> Result<()> {
     let paths = find_files(&args.paths, args.show_hidden)?;
-    for path in paths {
-        println!("{}", path.display());
+    if args.long {
+        println!("{}", format_output(&paths)?)
+    } else {
+        for path in paths {
+            println!("{}", path.display());
+        }
     }
     Ok(())
 }
 
 fn find_files(paths: &[String], show_hidden: bool) -> Result<Vec<PathBuf>> {
-    todo!()
+    let mut results = vec![];
+    for path in paths {
+        match fs::metadata(path) {
+            Err(err) => eprintln!("{path}: {err}"),
+            Ok(attr) if attr.is_dir() => {
+                for entry in fs::read_dir(path)? {
+                    let entry = entry?;
+                    let path = entry.path();
+                    if show_hidden
+                        || !path.file_name().map_or(false, |file_name| {
+                            file_name.to_string_lossy().starts_with('.')
+                        })
+                    {
+                        results.push(path);
+                    }
+                }
+            }
+            Ok(_) => results.push(path.into()),
+        }
+    }
+    Ok(results)
 }
 
 fn format_output(paths: &[PathBuf]) -> Result<String> {
@@ -41,16 +70,28 @@ fn format_output(paths: &[PathBuf]) -> Result<String> {
     let fmt = "{:<}{:<}  {:>}  {:<}  {:<}  {:>}  {:<}  {:<}";
     let mut table = Table::new(fmt);
     for path in paths {
+        let metadata = path.metadata()?;
+        let uid = metadata.uid();
+        let user = get_user_by_uid(uid)
+            .map(|user| user.name().to_string_lossy().into_owned())
+            .unwrap_or_else(|| uid.to_string());
+        let gid = metadata.gid();
+        let group = get_group_by_gid(gid)
+            .map(|group| group.name().to_string_lossy().into_owned())
+            .unwrap_or_else(|| gid.to_string());
+        let file_type = if path.is_dir() { "d" } else { "-" };
+        let perms = format_mode(metadata.mode());
+        let modified: DateTime<Local> = DateTime::from(metadata.modified()?);
         table.add_row(
             Row::new()
-                .with_cell("") // 1 "d"または"-"
-                .with_cell("") // 2 パーミッション
-                .with_cell("") // 3 リンク数
-                .with_cell("") // 4 ユーザー名
-                .with_cell("") // 5 グループ名
-                .with_cell("") // 6 サイズ
-                .with_cell("") // 7 更新日時
-                .with_cell(""), // 8 パス
+                .with_cell(file_type) // 1 "d"または"-"
+                .with_cell(perms) // 2 パーミッション
+                .with_cell(metadata.nlink()) // 3 リンク数
+                .with_cell(user) // 4 ユーザー名
+                .with_cell(group) // 5 グループ名
+                .with_cell(metadata.len()) // 6 サイズ
+                .with_cell(modified.format("%b %d %y %H:%M")) // 7 更新日時
+                .with_cell(path.display()), // 8 パス
         );
     }
     Ok(format!("{table}"))
@@ -59,12 +100,29 @@ fn format_output(paths: &[PathBuf]) -> Result<String> {
 /// 0o751のような8進数でファイルモードを指定すると、
 /// 「rwxr-x--x」のような文字列を返します。
 fn format_mode(mode: u32) -> String {
-    todo!();
+    format!(
+        "{}{}{}",
+        mk_triple(mode, Owner::User),
+        mk_triple(mode, Owner::Group),
+        mk_triple(mode, Owner::Other)
+    )
+}
+
+/// 0o500のような8進数と[`Owner`]を指定すると、
+/// 「r-x」のような文字列を返します。
+pub fn mk_triple(mode: u32, owner: Owner) -> String {
+    let [read, write, execute] = owner.masks();
+    format!(
+        "{}{}{}",
+        if mode & read == 0 { "-" } else { "r" },
+        if mode & write == 0 { "-" } else { "w" },
+        if mode & execute == 0 { "-" } else { "x" },
+    )
 }
 
 #[cfg(test)]
 mod test {
-    use super::{find_files, format_mode, format_output};
+    use super::{find_files, format_mode, format_output, mk_triple, owner::Owner};
     use std::path::PathBuf;
 
     #[test]
@@ -202,6 +260,14 @@ mod test {
 
         let dir_line = lines.remove(0);
         long_match(dir_line, "tests/inputs/dir", "drwxr-xr-x", None);
+    }
+
+    #[test]
+    fn test_mk_triple() {
+        assert_eq!(mk_triple(0o751, Owner::User), "rwx");
+        assert_eq!(mk_triple(0o751, Owner::Group), "r-x");
+        assert_eq!(mk_triple(0o751, Owner::Other), "--x");
+        assert_eq!(mk_triple(0o600, Owner::Other), "---");
     }
 
     #[test]
