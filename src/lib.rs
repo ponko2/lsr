@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use std::path::PathBuf;
+use tabular::{Row, Table};
 
 #[derive(Debug, Parser)]
 #[command(version, about, long_about = None)]
@@ -33,6 +34,26 @@ pub fn run(args: Args) -> Result<()> {
 
 fn find_files(paths: &[String], show_hidden: bool) -> Result<Vec<PathBuf>> {
     todo!()
+}
+
+fn format_output(paths: &[PathBuf]) -> Result<String> {
+    //         1   2     3     4     5     6     7     8
+    let fmt = "{:<}{:<}  {:>}  {:<}  {:<}  {:>}  {:<}  {:<}";
+    let mut table = Table::new(fmt);
+    for path in paths {
+        table.add_row(
+            Row::new()
+                .with_cell("") // 1 "d"または"-"
+                .with_cell("") // 2 パーミッション
+                .with_cell("") // 3 リンク数
+                .with_cell("") // 4 ユーザー名
+                .with_cell("") // 5 グループ名
+                .with_cell("") // 6 サイズ
+                .with_cell("") // 7 更新日時
+                .with_cell(""), // 8 パス
+        );
+    }
+    Ok(format!("{table}"))
 }
 
 #[cfg(test)]
